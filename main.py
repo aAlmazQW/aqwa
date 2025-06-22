@@ -83,7 +83,7 @@ async def track_loop(bot: Bot):
             last_status = "playing"
             last_track_id = track["id"]
             try:
-                text = f" {track[**'title'**]} — {track[__'artists'__]}"
+                text = f" {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
 
                 keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
