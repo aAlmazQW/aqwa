@@ -77,13 +77,17 @@ def get_current_track():
         link = track.get("link") or f"https://music.yandex.ru/search?text={track['title']} {track['artists']}"
         
         return {
-            "id": track_id,
-            "title": track.get("title", "Неизвестно"),
-            "artists": track.get("artist") if isinstance(track.get("artist"), str) 
-                      else ", ".join(track.get("artist", []) if track.get("artist")) 
-                      else "Неизвестный исполнитель",
-            "link": link
-        }
+    "id": track_id,
+    "title": track.get("title", "Неизвестно"),
+    "artists": (
+        track.get("artist") 
+        if isinstance(track.get("artist"), str)
+        else ", ".join(track.get("artist", [])) 
+        if track.get("artist") 
+        else "Неизвестный исполнитель"
+    ),
+    "link": link
+}
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Ошибка сети: {e}")
