@@ -3,7 +3,9 @@ import asyncio
 import requests
 import os
 from datetime import datetime
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from collections import Counter
+import matplotlib.pyplot as plt
+from telegram import Bot, Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -14,6 +16,8 @@ editing_active = False
 last_track_id = None
 editing_task = None
 message_id = None
+
+HISTORY_FILE = "track_history.txt"
 
 def get_current_track():
     try:
@@ -26,6 +30,8 @@ def get_current_track():
         data = r.json()
         if r.status_code != 200 or "track" not in data:
             return None
+        if data.get("is_paused") or not data.get("track"):
+            return "paused"
         t = data["track"]
         track_id = t.get("track_id")
         return {
@@ -39,7 +45,7 @@ def get_current_track():
         return None
 
 def save_track_to_history(title, artists):
-    with open("track_history.txt", "a", encoding="utf-8") as f:
+    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         f.write(f"{timestamp} | {title} — {artists}\n")
 
@@ -50,6 +56,14 @@ async def track_loop(bot: Bot):
         track = get_current_track()
         if not track:
             continue
+
+        if track == "paused":
+            try:
+                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸ Сейчас ничего не играет")
+            except Exception:
+                pass
+            continue
+
         if track["id"] != last_track_id:
             last_track_id = track["id"]
             try:
@@ -77,16 +91,66 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Бот запущен 🚀")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global editing_active, editing_task
+    global editing_active, editing_task, message_id
     editing_active = False
     if editing_task:
         editing_task.cancel()
         editing_task = None
+    try:
+        await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=message_id)
+    except Exception:
+        pass
     await update.message.reply_text("Бот остановлен 🛑")
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(HISTORY_FILE):
+        await update.message.reply_text("История ещё не сохранена.")
+        return
+    await update.message.reply_document(document=InputFile(HISTORY_FILE), filename="track_history.txt")
+
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(HISTORY_FILE):
+        await update.message.reply_text("История отсутствует.")
+        return
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        lines = f.readlines()
+    artists = [line.split("—")[-1].strip() for line in lines]
+    count = Counter(artists)
+    top_text = "\n".join([f"{i+1}. {name} — {qty}" for i, (name, qty) in enumerate(count.most_common(10))])
+    await update.message.reply_text(f"🔥 Топ исполнителей:\n{top_text}")
+
+async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(HISTORY_FILE):
+        await update.message.reply_text("История отсутствует.")
+        return
+    hours = []
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        for line in f:
+            if "|" in line:
+                time_part = line.split("|")[0].strip()
+                hour = int(time_part.split(" ")[1].split(":")[0])
+                hours.append(hour)
+    if not hours:
+        await update.message.reply_text("Недостаточно данных.")
+        return
+    counter = Counter(hours)
+    plt.figure(figsize=(8,4))
+    plt.bar(counter.keys(), counter.values(), color='skyblue')
+    plt.title("🎧 Активность по часам")
+    plt.xlabel("Час дня")
+    plt.ylabel("Количество треков")
+    plt.xticks(range(24))
+    chart_path = "chart.png"
+    plt.savefig(chart_path)
+    plt.close()
+    await update.message.reply_photo(photo=InputFile(chart_path))
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("history", history))
+    app.add_handler(CommandHandler("top", top))
+    app.add_handler(CommandHandler("chart", chart))
     print("Бот Railway готов 🚀")
     app.run_polling()
