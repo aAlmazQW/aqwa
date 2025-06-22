@@ -80,7 +80,7 @@ def get_current_track():
             "id": track_id,
             "title": track.get("title", "Неизвестно"),
             "artists": track.get("artist") if isinstance(track.get("artist"), str) 
-                      else ", ".join(track.get("artist", []) if track.get("artist")) 
+                      else ", ".join(track.get("artist",) if track.get("artist")) 
                       else "Неизвестный исполнитель",
             "link": link
         }
