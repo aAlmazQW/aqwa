@@ -175,7 +175,7 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plt.close()
     await update.message.reply_photo(photo=InputFile(chart_path))
 
-if name == "main":
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
