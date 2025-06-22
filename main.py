@@ -7,7 +7,7 @@ from collections import Counter
 import matplotlib.pyplot as plt
 from telegram import (
     Bot, Update, InputFile,
-    ReplyKeyboardMarkup, KeyboardButton
+    ReplyKeyboardMarkup, KeyboardButton,InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -86,6 +86,8 @@ async def track_loop(bot: Bot):
             try:
                 text = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
+                keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
+                markup = InlineKeyboardMarkup(keyboard)
                 await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text)
                 print("Обновлено:", text)
             except Exception as e:
