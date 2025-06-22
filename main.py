@@ -5,8 +5,11 @@ import os
 from datetime import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
-from telegram import Bot, Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram import (
+    Bot, Update, InputFile,
+    ReplyKeyboardMarkup, KeyboardButton
+)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
@@ -14,10 +17,20 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 editing_active = False
 last_track_id = None
+last_status = None
 editing_task = None
 message_id = None
 
 HISTORY_FILE = "track_history.txt"
+
+reply_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton("🎧 История"), KeyboardButton("🔥 Топ")],
+        [KeyboardButton("📈 График"), KeyboardButton("⏹ Стоп")]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False
+)
 
 def get_current_track():
     try:
@@ -50,7 +63,7 @@ def save_track_to_history(title, artists):
         f.write(f"{timestamp} | {title} — {artists}\n")
 
 async def track_loop(bot: Bot):
-    global editing_active, last_track_id, message_id
+    global editing_active, last_track_id, message_id, last_status
     while editing_active:
         await asyncio.sleep(5)
         track = get_current_track()
@@ -58,22 +71,22 @@ async def track_loop(bot: Bot):
             continue
 
         if track == "paused":
-            try:
-                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸ Сейчас ничего не играет")
-            except Exception:
-                pass
+            if last_status != "paused":
+                last_status = "paused"
+                try:
+                    await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸ Сейчас ничего не играет")
+                    print("Обновлено: Пауза")
+                except Exception:
+                    pass
             continue
 
-        if track["id"] != last_track_id:
+        if isinstance(track, dict) and track["id"] != last_track_id:
+            last_status = "playing"
             last_track_id = track["id"]
             try:
                 text = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
-
-                keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
-                markup = InlineKeyboardMarkup(keyboard)
-
-                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
+                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text)
                 print("Обновлено:", text)
             except Exception as e:
                 print("Ошибка при редактировании:", e)
@@ -81,14 +94,25 @@ async def track_loop(bot: Bot):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global editing_active, editing_task, message_id, last_track_id
     if editing_active:
-        await update.message.reply_text("Уже отслеживаю 🎶")
+        await update.message.reply_text("Уже отслеживаю 🎶", reply_markup=reply_keyboard)
         return
     editing_active = True
     last_track_id = None
     msg = await context.bot.send_message(chat_id=CHANNEL_ID, text="🎧 Ожидание трека...")
     message_id = msg.message_id
     editing_task = asyncio.create_task(track_loop(context.bot))
-    await update.message.reply_text("Бот запущен 🚀")
+    await update.message.reply_text("Бот запущен 🚀", reply_markup=reply_keyboard)
+
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "🎧 История":
+        await history(update, context)
+    elif text == "🔥 Топ":
+        await top(update, context)
+    elif text == "📈 График":
+        await chart(update, context)
+    elif text == "⏹ Стоп":
+        await stop(update, context)
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global editing_active, editing_task, message_id
@@ -100,13 +124,18 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=message_id)
     except Exception:
         pass
-    await update.message.reply_text("Бот остановлен 🛑")
+    await update.message.reply_text("Бот остановлен 🛑", reply_markup=reply_keyboard)
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.exists(HISTORY_FILE):
         await update.message.reply_text("История ещё не сохранена.")
         return
-    await update.message.reply_document(document=InputFile(HISTORY_FILE), filename="track_history.txt")
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        lines = f.readlines()[-20:]
+    history_text = "".join(lines).strip()
+    if not history_text:
+        history_text = "История пуста."
+    await update.message.reply_text(f"📜 Последние треки:\n{history_text}")
 
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.exists(HISTORY_FILE):
@@ -148,9 +177,6 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("history", history))
-    app.add_handler(CommandHandler("top", top))
-    app.add_handler(CommandHandler("chart", chart))
-    print("Бот Railway готов 🚀")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+    print("Бот с фиксированной паузой запущен 🚀")
     app.run_polling()
