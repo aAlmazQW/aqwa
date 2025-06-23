@@ -44,7 +44,7 @@ def get_current_track():
         print("Ответ от API:", data)
         if r.status_code != 200 or "track" not in data:
             return None
-        if data.get("is_paused") or not data.get("track"):
+        if not data.get("track"):
             return "paused"
         t = data["track"]
         track_id = t.get("track_id")
