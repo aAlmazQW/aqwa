@@ -74,6 +74,8 @@ async def track_loop(bot: Bot):
     while editing_active:
         await asyncio.sleep(5)
         track = get_current_track()
+        print("Обновляем сообщение:", text)
+        await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
 
         # Новый трек
     if isinstance(track, dict):
@@ -88,7 +90,7 @@ async def track_loop(bot: Bot):
             keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
             markup = InlineKeyboardMarkup(keyboard)
             print("Обновляем сообщение в канал...")
-            await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
+            await bot.send_message(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
             print("Обновлено:", text)
         except Exception as e:
             print("Ошибка при редактировании:", e)
@@ -96,7 +98,7 @@ async def track_loop(bot: Bot):
     elif datetime.now() - last_update_time > timedelta(minutes=5) and last_status != "paused":
         last_status = "paused"
     try:
-        await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸ Сейчас ничего не играет")
+        await bot.send_message(chat_id=CHANNEL_ID, message_id=message_id, text="⏸ Сейчас ничего не играет")
         print("Обновлено: Пауза по таймеру")
     except Exception:
         pass
