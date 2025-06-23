@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
 import matplotlib.pyplot as plt
 from telegram import (
@@ -31,6 +31,7 @@ reply_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True,
     one_time_keyboard=False
 )
+
 def get_current_track():
     try:
         headers = {
@@ -59,40 +60,39 @@ def get_current_track():
 def save_track_to_history(title, artists):
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        f.write(f"{timestamp} | {title} — {artists}\\n")
+        f.write(f"{timestamp} | {title} — {artists}\n")
 
 async def track_loop(bot: Bot):
     global editing_active, last_track_id, message_id, last_status
+    last_update_time = datetime.now()
     while editing_active:
         await asyncio.sleep(5)
         track = get_current_track()
-        if not track:
-            continue
 
-        if track == "paused":
-            if last_status != "paused":
-                last_status = "paused"
-                try:
-                    await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸️ Сейчас ничего не играет")
-                    print("Обновлено: Пауза")
-                except Exception:
-                    pass
-            continue
-
+        # Новый трек
         if isinstance(track, dict) and track["id"] != last_track_id:
             last_status = "playing"
             last_track_id = track["id"]
+            last_update_time = datetime.now()
             try:
-                text = f" {track['title']} — {track['artists']}"
+                text = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
-
                 keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
                 markup = InlineKeyboardMarkup(keyboard)
-
                 await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
                 print("Обновлено:", text)
             except Exception as e:
                 print("Ошибка при редактировании:", e)
+
+        # 5 минут без треков
+        elif datetime.now() - last_update_time > timedelta(minutes=5) and last_status != "paused":
+            last_status = "paused"
+            try:
+                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸️ Сейчас ничего не играет")
+                print("Обновлено: Пауза по таймеру")
+            except Exception:
+                pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global editing_active, editing_task, message_id, last_track_id
     if editing_active:
@@ -104,7 +104,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = msg.message_id
     editing_task = asyncio.create_task(track_loop(context.bot))
     await update.message.reply_text("Бот запущен 🚀", reply_markup=reply_keyboard)
-
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "🎧 История":
@@ -127,6 +126,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     await update.message.reply_text("Бот остановлен 🛑", reply_markup=reply_keyboard)
+
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not os.path.exists(HISTORY_FILE):
         await update.message.reply_text("История ещё не сохранена.")
@@ -164,7 +164,7 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Недостаточно данных.")
         return
     counter = Counter(hours)
-    plt.figure(figsize=(8,4))
+    plt.figure(figsize=(8, 4))
     plt.bar(counter.keys(), counter.values(), color='skyblue')
     plt.title("🎧 Активность по часам")
     plt.xlabel("Час дня")
@@ -179,5 +179,5 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-    print("Бот полностью запущен 🚀")
+    print("Бот с таймером запущен ⏰")
     app.run_polling()
