@@ -75,15 +75,15 @@ async def track_loop(bot: Bot):
           if track["id"] != last_track_id:
               last_status = "playing"
               last_track_id = track["id"]
-            try:
-                text = f" {track['title']} — {track['artists']}"
-                save_track_to_history(track['title'], track['artists'])
-                keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
-                markup = InlineKeyboardMarkup(keyboard)
-                await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
-            print("Обновлено:", text)
-        except Exception as e:
-            print("Ошибка при редактировании:", e)
+              try:
+                  text = f" {track['title']} — {track['artists']}"
+                  save_track_to_history(track['title'], track['artists'])
+                  keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
+                  markup = InlineKeyboardMarkup(keyboard)
+                  await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
+                  print("Обновлено:", text)
+                  except Exception as e:
+                  print("Ошибка при редактировании:", e)
 
         # 5 минут без треков
         elif datetime.now() - last_update_time > timedelta(minutes=1) and last_status != "paused":
