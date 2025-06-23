@@ -71,10 +71,10 @@ async def track_loop(bot: Bot):
 
         # Новый трек
        if isinstance(track, dict):
-    last_update_time = datetime.now()  # обновляем даже если трек не сменился
-    if track["id"] != last_track_id:
-        last_status = "playing"
-        last_track_id = track["id"]
+          last_update_time = datetime.now()  # обновляем даже если трек не сменился
+          if track["id"] != last_track_id:
+              last_status = "playing"
+              last_track_id = track["id"]
             try:
                 text = f" {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
