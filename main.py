@@ -75,7 +75,7 @@ async def track_loop(bot: Bot):
             last_track_id = track["id"]
             last_update_time = datetime.now()
             try:
-                text = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
+                text = f" {track['title']} — {track['artists']}"
                 save_track_to_history(track['title'], track['artists'])
                 keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
                 markup = InlineKeyboardMarkup(keyboard)
@@ -85,7 +85,7 @@ async def track_loop(bot: Bot):
                 print("Ошибка при редактировании:", e)
 
         # 5 минут без треков
-        elif datetime.now() - last_update_time > timedelta(minutes=5) and last_status != "paused":
+        elif datetime.now() - last_update_time > timedelta(minutes=1) and last_status != "paused":
             last_status = "paused"
             try:
                 await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text="⏸️ Сейчас ничего не играет")
