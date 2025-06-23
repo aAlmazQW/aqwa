@@ -41,6 +41,7 @@ def get_current_track():
         }
         r = requests.get("https://api_1.mipoh.ru/get_current_track_beta", headers=headers, timeout=10, verify=False)
         data = r.json()
+        print("Ответ от API:", data)
         if r.status_code != 200 or "track" not in data:
             return None
         if data.get("is_paused") or not data.get("track"):
@@ -81,6 +82,7 @@ async def track_loop(bot: Bot):
             save_track_to_history(track['title'], track['artists'])
             keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
             markup = InlineKeyboardMarkup(keyboard)
+            print("Обновляем сообщение в канал...")
             await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
             print("Обновлено:", text)
         except Exception as e:
