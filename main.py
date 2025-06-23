@@ -50,7 +50,7 @@ async def track_loop(bot: Bot):
         if isinstance(track, dict):
             if track["id"] != last_track_id:
                 last_track_id = track["id"]
-                text = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
+                text = f" {track['title']} — {track['artists']}"
                 try:
                     keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
                     markup = InlineKeyboardMarkup(keyboard)
