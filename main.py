@@ -40,12 +40,16 @@ def get_current_track():
             "ya-token": YANDEX_TOKEN
         }
         r = requests.get("https://api_1.mipoh.ru/get_current_track_beta", headers=headers, timeout=10, verify=False)
+        if r.status_code != 200:
+            return None
+
         data = r.json()
         print("Ответ от API:", data)
-        if r.status_code != 200 or "track" not in data:
-            return None
+
+        # 🎯 Если track вообще отсутствует — реально ничего не играет
         if not data.get("track"):
-            return "paused"
+            return None
+
         t = data["track"]
         track_id = t.get("track_id")
         return {
@@ -54,6 +58,7 @@ def get_current_track():
             "artists": t.get("artist") if isinstance(t.get("artist"), str) else ", ".join(t.get("artist", [])),
             "link": f"https://music.yandex.ru/track/{track_id}"
         }
+
     except Exception as e:
         print("Ошибка получения трека:", e)
         return None
