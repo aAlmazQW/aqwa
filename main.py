@@ -49,7 +49,7 @@ def get_current_track():
         
         # Проверяем статус воспроизведения
         if not data.get("track"):
-    is_paused = True
+             is_paused = True
     return None
         else:
             is_paused = False
