@@ -48,9 +48,9 @@ def get_current_track():
         data = r.json()
         
         # Проверяем статус воспроизведения
-        if data.get("is_paused") or not data.get("track"):
-            is_paused = True
-            return None
+        if not data.get("track"):
+    is_paused = True
+    return None
         else:
             is_paused = False
             
