@@ -3,9 +3,12 @@ import requests
 import os
 import logging
 from telegram import (
-    Bot, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, Update
+    Bot, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, Update,
+    ReplyKeyboardMarkup, KeyboardButton
 )
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, ContextTypes, MessageHandler, filters
+)
 from telegram.error import BadRequest, TelegramError
 
 # Настройка логирования
@@ -25,6 +28,17 @@ message_id = None
 bot_active = False
 is_paused = False
 last_image = None
+
+# Клавиатура для нижней панели
+def get_reply_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("▶️ Запустить трекер"), 
+             KeyboardButton("⏹ Остановить трекер")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
 
 def get_current_track():
     global is_paused
@@ -46,21 +60,24 @@ def get_current_track():
             return None
             
         data = r.json()
-        logger.info(f"Полный ответ API: {data}")  # Логируем весь ответ
-        
-        # Проверка на паузу (если нет трека)
+        logger.info(f"Полный ответ API: {data}")
+
+        if data.get('paused', False):
+            is_paused = True
+            logger.info("Обнаружена пауза")
+            return None
+            
         if not data.get("track"):
             is_paused = True
             logger.info("Трек не найден - статус паузы")
             return None
-        
-        # Если трек есть
+            
         is_paused = False
         t = data["track"]
         return {
             "id": t.get("track_id"),
             "title": t.get("title"),
-            "artists": t.get("artist") if isinstance(t.get("artist"), str) else ", ".join(t.get("artist", [])),
+            "artists": ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", ""),
             "link": f"https://music.yandex.ru/track/{t.get('track_id')}",
             "img": t.get("img")
         }
@@ -71,7 +88,7 @@ def get_current_track():
 async def send_new_track_message(bot: Bot, track: dict) -> int:
     try:
         caption = f"{track['title']} — {track['artists']}"
-        keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
+        keyboard = [[InlineKeyboardButton("🎧 Слушать", url=track["link"])]]
         markup = InlineKeyboardMarkup(keyboard)
         
         msg = await bot.send_photo(
@@ -80,7 +97,7 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
             caption=caption,
             reply_markup=markup
         )
-        logger.info(f"Отправлен новый трек: {caption}")
+        logger.info(f"Отправлен трек: {caption}")
         return msg.message_id
     except Exception as e:
         logger.error(f"Ошибка отправки трека: {e}")
@@ -101,7 +118,7 @@ async def send_pause_message(bot: Bot) -> int:
 async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
     try:
         media = InputMediaPhoto(media=track["img"], 
-                              caption=f"{track['title']} — {track['artists']}")
+                             caption=f"{track['title']} — {track['artists']}")
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🎧 Слушать", url=track["link"])]])
         
         await bot.edit_message_media(
@@ -149,10 +166,12 @@ async def track_checker():
         if is_paused:
             if message_id:
                 if not await edit_to_pause_message(bot, message_id):
-                    message_id = await send_pause_message(bot)
+                    message_id = await send_pause_message(bot) or message_id
             else:
                 message_id = await send_pause_message(bot)
         elif track:
+            last_image = track["img"]
+            
             if message_id:
                 if track["id"] != last_track_id:
                     if not await edit_track_message(bot, track, message_id):
@@ -164,38 +183,71 @@ async def track_checker():
         
         await asyncio.sleep(5)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_active, message_id
     
     if bot_active:
-        await update.message.reply_text("🔴 Бот уже работает!")
+        await update.message.reply_text(
+            "🔴 Трекер уже работает!",
+            reply_markup=get_reply_keyboard()
+        )
         return
     
     bot_active = True
     message_id = None
     asyncio.create_task(track_checker())
-    await update.message.reply_text("🟢 Бот запущен!")
-    logger.info("Бот запущен командой /start")
+    await update.message.reply_text(
+        "🟢 Трекер запущен! Начинаю отслеживание...",
+        reply_markup=get_reply_keyboard()
+    )
+    logger.info("Трекер запущен")
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_active, message_id
     
     if not bot_active:
-        await update.message.reply_text("🔴 Бот уже остановлен!")
+        await update.message.reply_text(
+            "🔴 Трекер уже остановлен!",
+            reply_markup=get_reply_keyboard()
+        )
         return
     
     bot_active = False
     if message_id:
         await delete_message(Bot(token=TELEGRAM_BOT_TOKEN), message_id)
-    message_id = None
-    await update.message.reply_text("⏹️ Бот остановлен")
-    logger.info("Бот остановлен командой /stop")
+        message_id = None
+    await update.message.reply_text(
+        "⏹️ Трекер остановлен. Сообщение удалено.",
+        reply_markup=get_reply_keyboard()
+    )
+    logger.info("Трекер остановлен")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "▶️ Запустить трекер":
+        await start_bot(update, context)
+    elif text == "⏹ Остановить трекер":
+        await stop_bot(update, context)
+    else:
+        await update.message.reply_text(
+            "Используйте кнопки для управления трекером",
+            reply_markup=get_reply_keyboard()
+        )
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Добро пожаловать! Используйте кнопки для управления:",
+        reply_markup=get_reply_keyboard()
+    )
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
-    logger.info("Бот готов к работе")
+    
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    logger.info("Бот запущен и готов к работе")
     app.run_polling()
 
 if __name__ == "__main__":
