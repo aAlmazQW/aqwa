@@ -27,6 +27,7 @@ is_paused = False
 last_image = None
 
 def get_current_track():
+    logger.info(f"Полный ответ API: {data}")
     global is_paused
     
     try:
