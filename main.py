@@ -1,23 +1,15 @@
-
 import asyncio
+from tracemalloc import start, stop
 import requests
 import os
-from datetime import datetime
-from telegram import (
-    Bot, Update, InlineKeyboardMarkup, InlineKeyboardButton
-)
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ContextTypes
-)
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-editing_active = False
 last_track_id = None
 message_id = None
-editing_task = None
 
 def get_current_track():
     try:
@@ -37,56 +29,54 @@ def get_current_track():
             "id": t.get("track_id"),
             "title": t.get("title"),
             "artists": t.get("artist") if isinstance(t.get("artist"), str) else ", ".join(t.get("artist", [])),
-            "link": f"https://music.yandex.ru/track/{t.get("track_id")}"
+            "link": f"https://music.yandex.ru/track/{t.get("track_id")}",
+            "img": t.get("img")
         }
     except Exception as e:
         print("Ошибка API:", e)
         return None
 
-async def track_loop(bot: Bot):
-    global last_track_id, message_id, editing_active
-    while editing_active:
+async def main():
+    global last_track_id, message_id
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+    # первое сообщение-заглушка
+    msg = await bot.send_message(chat_id=CHANNEL_ID, text="🎧 Ожидание трека...")
+    message_id = msg.message_id
+
+    while True:
         track = get_current_track()
-        if isinstance(track, dict):
-            if track["id"] != last_track_id:
-                last_track_id = track["id"]
-                text = f" {track['title']} — {track['artists']}"
+        if isinstance(track, dict) and track["id"] != last_track_id:
+            last_track_id = track["id"]
+            caption = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
+            print("▶️", caption)
+            try:
+                keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
+                markup = InlineKeyboardMarkup(keyboard)
+
+                # удаляем старое сообщение
                 try:
-                    keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
-                    markup = InlineKeyboardMarkup(keyboard)
-                    await bot.edit_message_text(chat_id=CHANNEL_ID, message_id=message_id, text=text, reply_markup=markup)
-                    print("Обновлено:", text)
-                except Exception as e:
-                    print("Ошибка при редактировании:", e)
+                    await bot.delete_message(chat_id=CHANNEL_ID, message_id=message_id)
+                except:
+                    pass
+
+                # отправляем новое сообщение с обложкой
+                msg = await bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=track["img"],
+                    caption=caption,
+                    reply_markup=markup
+                )
+                message_id = msg.message_id
+
+            except Exception as e:
+                print("Ошибка при отправке фото:", e)
         await asyncio.sleep(5)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global editing_active, editing_task, message_id, last_track_id
-    if editing_active:
-        await update.message.reply_text("Уже отслеживаю 🎶")
-        return
-    editing_active = True
-    last_track_id = None
-    msg = await context.bot.send_message(chat_id=CHANNEL_ID, text="🎧 Ожидание трека...")
-    message_id = msg.message_id
-    editing_task = asyncio.create_task(track_loop(context.bot))
-    await update.message.reply_text("Бот запущен 🚀")
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global editing_active, editing_task, message_id
-    editing_active = False
-    if editing_task:
-        editing_task.cancel()
-        editing_task = None
-    try:
-        await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=message_id)
-    except Exception:
-        pass
-    await update.message.reply_text("Бот остановлен 🛑")
-
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
+    asyncio.run(main())
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build() # type: ignore
+    app.add_handler(CommandHandler("start", start)) # type: ignore
+    app.add_handler(CommandHandler("stop", stop)) # type: ignore
     print("Бот запущен с командами /start и /stop ✅")
     app.run_polling()
