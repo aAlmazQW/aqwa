@@ -1,8 +1,9 @@
 import asyncio
-from tracemalloc import start, stop
 import requests
 import os
-from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import (
+    Bot, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
@@ -40,43 +41,34 @@ async def main():
     global last_track_id, message_id
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-    # первое сообщение-заглушка
-    msg = await bot.send_message(chat_id=CHANNEL_ID, text="🎧 Ожидание трека...")
-    message_id = msg.message_id
+    # Отправляем первое фото-сообщение
+    track = get_current_track()
+    if track:
+        caption = f"{track['title']} — {track['artists']}"
+        keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
+        markup = InlineKeyboardMarkup(keyboard)
+        msg = await bot.send_photo(chat_id=CHANNEL_ID, photo=track["img"], caption=caption, reply_markup=markup)
+        message_id = msg.message_id
+        last_track_id = track["id"]
 
     while True:
+        await asyncio.sleep(5)
         track = get_current_track()
         if isinstance(track, dict) and track["id"] != last_track_id:
             last_track_id = track["id"]
-            caption = f"🎶 Сейчас играет: {track['title']} — {track['artists']}"
+            caption = f"{track['title']} — {track['artists']}"
             print("▶️", caption)
             try:
+                media = InputMediaPhoto(media=track["img"], caption=caption)
                 keyboard = [[InlineKeyboardButton("🎧 Слушать в Я.Музыке", url=track["link"])]]
                 markup = InlineKeyboardMarkup(keyboard)
-
-                # удаляем старое сообщение
-                try:
-                    await bot.delete_message(chat_id=CHANNEL_ID, message_id=message_id)
-                except:
-                    pass
-
-                # отправляем новое сообщение с обложкой
-                msg = await bot.send_photo(
+                await bot.edit_message_media(
                     chat_id=CHANNEL_ID,
-                    photo=track["img"],
-                    caption=caption,
+                    message_id=message_id,
+                    media=media,
                     reply_markup=markup
                 )
-                message_id = msg.message_id
-
             except Exception as e:
-                print("Ошибка при отправке фото:", e)
-        await asyncio.sleep(5)
-
+                print("Ошибка редактирования:", e)
 if __name__ == "__main__":
     asyncio.run(main())
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build() # type: ignore
-    app.add_handler(CommandHandler("start", start)) # type: ignore
-    app.add_handler(CommandHandler("stop", stop)) # type: ignore
-    print("Бот запущен с командами /start и /stop ✅")
-    app.run_polling()
