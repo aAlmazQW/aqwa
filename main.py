@@ -163,8 +163,90 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         logger.error(f"Ошибка обновления трека: {e}")
         return False
 
-# Остальные функции (delete_message, update_status_message, button_handler, 
-# start_command, track_checker, main) остаются без изменений, как в вашем исходном коде
+async def delete_message(bot: Bot, chat_id: int, msg_id: int):
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+    except Exception as e:
+        logger.error(f"Ошибка удаления: {e}")
+
+async def update_status_message(bot: Bot, chat_id: int, text: str):
+    global bot_status_message_id
+    try:
+        if bot_status_message_id:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_status_message_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+        else:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+            bot_status_message_id = msg.message_id
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса: {e}")
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot_active, channel_message_id
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "start_tracker":
+        if not bot_active:
+            bot_active = True
+            channel_message_id = None
+            asyncio.create_task(track_checker())
+            await update_status_message(context.bot, query.message.chat.id, "🟢 Трекер запущен!")
+    elif query.data == "stop_tracker":
+        if bot_active:
+            bot_active = False
+            if channel_message_id:
+                await delete_message(context.bot, CHANNEL_ID, channel_message_id)
+                channel_message_id = None
+            await update_status_message(context.bot, query.message.chat.id, "⏹️ Трекер остановлен")
+    elif query.data == "refresh_status":
+        status = "🟢 Активен" if bot_active else "🔴 Остановлен"
+        await update_status_message(context.bot, query.message.chat.id, f"{status}\nУправление:")
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start - показывает клавиатуру управления"""
+    global bot_status_message_id
+    
+    # Удаляем предыдущее сообщение со статусом, если оно есть
+    if bot_status_message_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=bot_status_message_id
+            )
+        except Exception as e:
+            logger.error(f"Ошибка удаления сообщения: {e}")
+    
+    # Отправляем новое сообщение с клавиатурой
+    msg = await update.message.reply_text(
+        "🎵 Музыкальный трекер\nУправление:",
+        reply_markup=get_inline_keyboard()
+    )
+    bot_status_message_id = msg.message_id
+
+async def track_checker():
+    global last_track_id, channel_message_id, bot_active
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    
+    while bot_active:
+        track = get_current_track()
+        if track:
+            if channel_message_id and track["id"] != last_track_id:
+                if not await edit_track_message(bot, track, channel_message_id):
+                    channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
+            elif not channel_message_id:
+                channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
+        await asyncio.sleep(5)
 
 def main():
     # Проверка переменных окружения
