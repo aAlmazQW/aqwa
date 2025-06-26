@@ -140,7 +140,128 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         logger.error(f"Ошибка обновления трека: {e}")
         return False
 
-# ... (остальные функции без изменений: delete_message, update_status_message, track_checker, button_handler, start_command)
+async def delete_message(bot: Bot, chat_id: int, msg_id: int):
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        logger.info(f"Сообщение {msg_id} удалено")
+    except Exception as e:
+        logger.error(f"Ошибка удаления: {e}")
+
+async def update_status_message(bot: Bot, chat_id: int, text: str):
+    global bot_status_message_id
+    
+    try:
+        if bot_status_message_id:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_status_message_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+        else:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+            bot_status_message_id = msg.message_id
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса: {e}")
+
+async def track_checker():
+    global last_track_id, channel_message_id, bot_active
+    
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    logger.info("Трекер запущен")
+    
+    while bot_active:
+        track = get_current_track()
+        
+        if track:
+            if channel_message_id:
+                if track["id"] != last_track_id:
+                    if not await edit_track_message(bot, track, channel_message_id):
+                        channel_message_id = await send_new_track_message(bot, track)
+                    last_track_id = track["id"]
+            else:
+                channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
+        
+        await asyncio.sleep(5)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot_active, channel_message_id
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "start_tracker":
+        if bot_active:
+            await update_status_message(
+                context.bot,
+                query.message.chat.id,
+                "🔴 Трекер уже работает!"
+            )
+            return
+        
+        bot_active = True
+        channel_message_id = None
+        asyncio.create_task(track_checker())
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            "🟢 Трекер запущен! Начинаю отслеживание..."
+        )
+    elif query.data == "stop_tracker":
+        if not bot_active:
+            await update_status_message(
+                context.bot,
+                query.message.chat.id,
+                "🔴 Трекер уже остановлен!"
+            )
+            return
+        
+        bot_active = False
+        if channel_message_id:
+            await delete_message(
+                context.bot,
+                CHANNEL_ID,
+                channel_message_id
+            )
+            channel_message_id = None
+        
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            "⏹️ Трекер остановлен. Сообщение удалено."
+        )
+    elif query.data == "refresh_status":
+        status_text = "🟢 Трекер активен" if bot_active else "🔴 Трекер остановлен"
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            f"{status_text}\n\nИспользуйте кнопки для управления:"
+        )
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    global bot_status_message_id
+    
+    if bot_status_message_id:
+        try:
+            await delete_message(
+                context.bot,
+                update.effective_chat.id,
+                bot_status_message_id
+            )
+        except:
+            pass
+    
+    msg = await update.message.reply_text(
+        "🎵 Музыкальный трекер Яндекс.Музыки\n\n"
+        "Используйте кнопки ниже для управления:",
+        reply_markup=get_inline_keyboard()
+    )
+    bot_status_message_id = msg.message_id
 
 def main():
     # Проверка переменных окружения
