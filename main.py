@@ -32,6 +32,12 @@ YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 GENIUS_TOKEN = os.getenv("GENIUS_TOKEN")
 
+# Глобальные переменные состояния
+last_track_id = None
+channel_message_id = None
+bot_active = False
+bot_status_message_id = None  # Добавлено объявление глобальной переменной
+
 # Инициализация Genius API
 genius = None
 if GENIUS_TOKEN:
