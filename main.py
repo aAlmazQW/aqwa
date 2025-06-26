@@ -58,28 +58,21 @@ def get_current_track():
         data = r.json()
         logger.debug(f"Полный ответ API: {data}")
 
-        # Явная проверка статуса паузы
-        if data.get('paused', False):
+        if 'track' in data and data['track']:
+            is_paused = False
+            t = data["track"]
+            return {
+                "id": t.get("track_id"),
+                "title": t.get("title"),
+                "artists": ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", ""),
+                "link": f"https://music.yandex.ru/track/{t.get('track_id')}",
+                "img": t.get("img")
+            }
+        else:
             is_paused = True
-            logger.info("Обнаружен явный флаг паузы")
+            logger.info("Пауза: трек не найден в ответе API")
             return None
             
-        # Проверка наличия трека
-        if not data.get("track"):
-            is_paused = True
-            logger.info("Трек не найден - статус паузы")
-            return None
-            
-        # Если трек есть и нет паузы
-        is_paused = False
-        t = data["track"]
-        return {
-            "id": t.get("track_id"),
-            "title": t.get("title"),
-            "artists": ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", ""),
-            "link": f"https://music.yandex.ru/track/{t.get('track_id')}",
-            "img": t.get("img")
-        }
     except Exception as e:
         logger.error(f"Ошибка при получении трека: {e}", exc_info=True)
         return None
@@ -104,10 +97,9 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
 
 async def send_pause_message(bot: Bot) -> int:
     try:
-        msg = await bot.send_photo(
+        msg = await bot.send_message(
             chat_id=CHANNEL_ID,
-            photo="https://via.placeholder.com/300?text=Музыка+на+паузе",
-            caption="⏸️ Музыка на паузе"
+            text="⏸️ Музыка на паузе"
         )
         logger.info("Отправлено сообщение о паузе")
         return msg.message_id
@@ -135,14 +127,10 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
 
 async def edit_to_pause_message(bot: Bot, msg_id: int) -> bool:
     try:
-        media = InputMediaPhoto(
-            media="https://via.placeholder.com/300?text=Музыка+на+паузе",
-            caption="⏸️ Музыка на паузе"
-        )
-        await bot.edit_message_media(
+        await bot.edit_message_caption(
             chat_id=CHANNEL_ID,
             message_id=msg_id,
-            media=media,
+            caption="⏸️ Музыка на паузе",
             reply_markup=None
         )
         logger.info("Сообщение изменено на паузу")
@@ -173,23 +161,26 @@ async def track_checker():
         if current_status != last_status:
             logger.info(f"Статус изменился: {last_status} → {current_status}")
             last_status = current_status
+        
+        if is_paused and current_status != last_status:
+            logger.info("Обработка новой паузы")
+            if message_id:
+                if not await edit_to_pause_message(bot, message_id):
+                    message_id = await send_pause_message(bot) or message_id
+            else:
+                message_id = await send_pause_message(bot)
+        
+        elif track and (track["id"] != last_track_id or current_status != last_status):
+            logger.info("Обнаружен новый трек или возобновление воспроизведения")
+            last_image = track["img"]
             
-            if is_paused:
-                logger.info("Обработка паузы")
-                if message_id:
-                    if not await edit_to_pause_message(bot, message_id):
-                        message_id = await send_pause_message(bot) or message_id
-                else:
-                    message_id = await send_pause_message(bot)
-            elif track:
-                logger.info("Обработка трека")
-                last_image = track["img"]
-                if message_id:
-                    if not await edit_track_message(bot, track, message_id):
-                        message_id = await send_new_track_message(bot, track)
-                else:
+            if message_id:
+                if not await edit_track_message(bot, track, message_id):
                     message_id = await send_new_track_message(bot, track)
-                last_track_id = track["id"]
+            else:
+                message_id = await send_new_track_message(bot, track)
+            
+            last_track_id = track["id"]
         
         await asyncio.sleep(5)
 
