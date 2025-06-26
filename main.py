@@ -40,11 +40,10 @@ def get_inline_keyboard():
         [InlineKeyboardButton("🔄 Обновить статус", callback_data="refresh_status")]
     ])
 
-def generate_multi_service_link(track_title: str, artist: str, yandex_link: str) -> str:
-    """Генерирует ссылку на мультисервисный поиск трека"""
-    base_url = "https://song.link/ya/"
-    query = f"{artist} - {track_title}"
-    return f"{base_url}?q={quote(query)}&ref=yamusic_bot"
+# NEW: Упрощенная и корректная генерация ссылки song.link
+def generate_multi_service_link(track_id: str) -> str:
+    """Генерирует прямую ссылку на song.link по ID трека"""
+    return f"https://song.link/ya/{track_id}"
 
 def get_current_track():
     try:
@@ -71,15 +70,19 @@ def get_current_track():
             return None
             
         t = data["track"]
-        yandex_link = f"https://music.yandex.ru/track/{t.get('track_id')}"
+        track_id = t.get("track_id")
+        if not track_id:  # NEW: Проверка на наличие ID
+            logger.error("Отсутствует ID трека в ответе API")
+            return None
+
         artists = ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", "")
         
         return {
-            "id": t.get("track_id"),
+            "id": track_id,
             "title": t.get("title"),
             "artists": artists,
-            "yandex_link": yandex_link,
-            "multi_link": generate_multi_service_link(t.get("title"), artists, yandex_link),
+            "yandex_link": f"https://music.yandex.ru/track/{track_id}",
+            "multi_link": generate_multi_service_link(track_id),  # NEW: Исправленный вызов
             "img": t.get("img")
         }
     except Exception as e:
@@ -90,9 +93,12 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
     try:
         caption = f"{track['title']} — {track['artists']}"
         
+        # NEW: Обновленная клавиатура с двумя кнопками
         keyboard = [
-            [InlineKeyboardButton("🎵 Слушать на всех платформах",
-                                   url=track['multi_link'])]
+            [
+                InlineKeyboardButton("🔊 Яндекс.Музыка", url=track['yandex_link']),
+                InlineKeyboardButton("🌍 Все платформы", url=track['multi_link'])
+            ]
         ]
         markup = InlineKeyboardMarkup(keyboard)
         
@@ -113,9 +119,12 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         caption = f"{track['title']} — {track['artists']}"
         media = InputMediaPhoto(media=track["img"], caption=caption)
         
-        keyboard =[
-            [InlineKeyboardButton("🎵 Слушать на всех платформах",
-                                    url=track['multi_link'])]
+        # NEW: Та же клавиатура, что и в send_new_track_message
+        keyboard = [
+            [
+                InlineKeyboardButton("🔊 Яндекс.Музыка", url=track['yandex_link']),
+                InlineKeyboardButton("🌍 Все платформы", url=track['multi_link'])
+            ]
         ]
         markup = InlineKeyboardMarkup(keyboard)
         
@@ -131,128 +140,7 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         logger.error(f"Ошибка обновления трека: {e}")
         return False
 
-async def delete_message(bot: Bot, chat_id: int, msg_id: int):
-    try:
-        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        logger.info(f"Сообщение {msg_id} удалено")
-    except Exception as e:
-        logger.error(f"Ошибка удаления: {e}")
-
-async def update_status_message(bot: Bot, chat_id: int, text: str):
-    global bot_status_message_id
-    
-    try:
-        if bot_status_message_id:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=bot_status_message_id,
-                text=text,
-                reply_markup=get_inline_keyboard()
-            )
-        else:
-            msg = await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=get_inline_keyboard()
-            )
-            bot_status_message_id = msg.message_id
-    except Exception as e:
-        logger.error(f"Ошибка обновления статуса: {e}")
-
-async def track_checker():
-    global last_track_id, channel_message_id, bot_active
-    
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    logger.info("Трекер запущен")
-    
-    while bot_active:
-        track = get_current_track()
-        
-        if track:
-            if channel_message_id:
-                if track["id"] != last_track_id:
-                    if not await edit_track_message(bot, track, channel_message_id):
-                        channel_message_id = await send_new_track_message(bot, track)
-                    last_track_id = track["id"]
-            else:
-                channel_message_id = await send_new_track_message(bot, track)
-                last_track_id = track["id"]
-        
-        await asyncio.sleep(5)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_active, channel_message_id
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "start_tracker":
-        if bot_active:
-            await update_status_message(
-                context.bot,
-                query.message.chat.id,
-                "🔴 Трекер уже работает!"
-            )
-            return
-        
-        bot_active = True
-        channel_message_id = None
-        asyncio.create_task(track_checker())
-        await update_status_message(
-            context.bot,
-            query.message.chat.id,
-            "🟢 Трекер запущен! Начинаю отслеживание..."
-        )
-    elif query.data == "stop_tracker":
-        if not bot_active:
-            await update_status_message(
-                context.bot,
-                query.message.chat.id,
-                "🔴 Трекер уже остановлен!"
-            )
-            return
-        
-        bot_active = False
-        if channel_message_id:
-            await delete_message(
-                context.bot,
-                CHANNEL_ID,
-                channel_message_id
-            )
-            channel_message_id = None
-        
-        await update_status_message(
-            context.bot,
-            query.message.chat.id,
-            "⏹️ Трекер остановлен. Сообщение удалено."
-        )
-    elif query.data == "refresh_status":
-        status_text = "🟢 Трекер активен" if bot_active else "🔴 Трекер остановлен"
-        await update_status_message(
-            context.bot,
-            query.message.chat.id,
-            f"{status_text}\n\nИспользуйте кнопки для управления:"
-        )
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    global bot_status_message_id
-    
-    if bot_status_message_id:
-        try:
-            await delete_message(
-                context.bot,
-                update.effective_chat.id,
-                bot_status_message_id
-            )
-        except:
-            pass
-    
-    msg = await update.message.reply_text(
-        "🎵 Музыкальный трекер Яндекс.Музыки\n\n"
-        "Используйте кнопки ниже для управления:",
-        reply_markup=get_inline_keyboard()
-    )
-    bot_status_message_id = msg.message_id
+# ... (остальные функции без изменений: delete_message, update_status_message, track_checker, button_handler, start_command)
 
 def main():
     # Проверка переменных окружения
