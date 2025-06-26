@@ -2,6 +2,7 @@ import asyncio
 import requests
 import os
 import logging
+from urllib.parse import quote
 from telegram import (
     Bot, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, Update,
     ReplyKeyboardMarkup, KeyboardButton
@@ -24,10 +25,9 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 # Глобальные переменные состояния
 last_track_id = None
-message_id = None
+channel_message_id = None
 bot_active = False
-is_paused = False
-last_image = None
+bot_status_message_id = None
 
 def get_reply_keyboard():
     return ReplyKeyboardMarkup(
@@ -36,9 +36,13 @@ def get_reply_keyboard():
         one_time_keyboard=False
     )
 
+def generate_multi_service_link(track_title: str, artist: str, yandex_link: str) -> str:
+    """Генерирует ссылку на мультисервисный поиск трека"""
+    base_url = "https://songwhip.com/"
+    query = f"{artist} - {track_title}"
+    return f"{base_url}?q={quote(query)}&ref=yamusic_bot"
+
 def get_current_track():
-    global is_paused
-    
     try:
         headers = {
             "ya-token": YANDEX_TOKEN,
@@ -58,21 +62,22 @@ def get_current_track():
         data = r.json()
         logger.debug(f"Полный ответ API: {data}")
 
-        if 'track' in data and data['track']:
-            is_paused = False
-            t = data["track"]
-            return {
-                "id": t.get("track_id"),
-                "title": t.get("title"),
-                "artists": ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", ""),
-                "link": f"https://music.yandex.ru/track/{t.get('track_id')}",
-                "img": t.get("img")
-            }
-        else:
-            is_paused = True
-            logger.info("Пауза: трек не найден в ответе API")
+        if not data.get("track"):
+            logger.info("Трек не найден")
             return None
             
+        t = data["track"]
+        yandex_link = f"https://music.yandex.ru/track/{t.get('track_id')}"
+        artists = ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", "")
+        
+        return {
+            "id": t.get("track_id"),
+            "title": t.get("title"),
+            "artists": artists,
+            "yandex_link": yandex_link,
+            "multi_link": generate_multi_service_link(t.get("title"), artists, yandex_link),
+            "img": t.get("img")
+        }
     except Exception as e:
         logger.error(f"Ошибка при получении трека: {e}", exc_info=True)
         return None
@@ -80,7 +85,10 @@ def get_current_track():
 async def send_new_track_message(bot: Bot, track: dict) -> int:
     try:
         caption = f"{track['title']} — {track['artists']}"
-        keyboard = [[InlineKeyboardButton("🎧 Слушать", url=track["link"])]]
+        
+        keyboard = [
+            [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
+        ]
         markup = InlineKeyboardMarkup(keyboard)
         
         msg = await bot.send_photo(
@@ -95,23 +103,15 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
         logger.error(f"Ошибка отправки трека: {e}")
         return None
 
-async def send_pause_message(bot: Bot) -> int:
-    try:
-        msg = await bot.send_message(
-            chat_id=CHANNEL_ID,
-            text="⏸️ Музыка на паузе"
-        )
-        logger.info("Отправлено сообщение о паузе")
-        return msg.message_id
-    except Exception as e:
-        logger.error(f"Ошибка отправки паузы: {e}")
-        return None
-
 async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
     try:
-        media = InputMediaPhoto(media=track["img"], 
-                             caption=f"{track['title']} — {track['artists']}")
-        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🎧 Слушать", url=track["link"])]])
+        caption = f"{track['title']} — {track['artists']}"
+        media = InputMediaPhoto(media=track["img"], caption=caption)
+        
+        keyboard = [
+            [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
+        ]
+        markup = InlineKeyboardMarkup(keyboard)
         
         await bot.edit_message_media(
             chat_id=CHANNEL_ID,
@@ -125,103 +125,100 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         logger.error(f"Ошибка обновления трека: {e}")
         return False
 
-async def edit_to_pause_message(bot: Bot, msg_id: int) -> bool:
+async def delete_message(bot: Bot, chat_id: int, msg_id: int):
     try:
-        await bot.edit_message_caption(
-            chat_id=CHANNEL_ID,
-            message_id=msg_id,
-            caption="⏸️ Музыка на паузе",
-            reply_markup=None
-        )
-        logger.info("Сообщение изменено на паузу")
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка изменения на паузу: {e}")
-        return False
-
-async def delete_message(bot: Bot, msg_id: int):
-    try:
-        await bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         logger.info(f"Сообщение {msg_id} удалено")
     except Exception as e:
         logger.error(f"Ошибка удаления: {e}")
 
+async def update_status_message(bot: Bot, chat_id: int, text: str):
+    global bot_status_message_id
+    
+    try:
+        if bot_status_message_id:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_status_message_id,
+                text=text,
+                reply_markup=get_reply_keyboard()
+            )
+        else:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=get_reply_keyboard()
+            )
+            bot_status_message_id = msg.message_id
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса: {e}")
+
 async def track_checker():
-    global last_track_id, message_id, bot_active, is_paused, last_image
+    global last_track_id, channel_message_id, bot_active
     
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     logger.info("Трекер запущен")
     
-    last_status = None
-    
     while bot_active:
         track = get_current_track()
-        current_status = "pause" if is_paused else "play"
         
-        if current_status != last_status:
-            logger.info(f"Статус изменился: {last_status} → {current_status}")
-            last_status = current_status
-        
-        if is_paused and current_status != last_status:
-            logger.info("Обработка новой паузы")
-            if message_id:
-                if not await edit_to_pause_message(bot, message_id):
-                    message_id = await send_pause_message(bot) or message_id
+        if track:
+            if channel_message_id:
+                if track["id"] != last_track_id:
+                    if not await edit_track_message(bot, track, channel_message_id):
+                        channel_message_id = await send_new_track_message(bot, track)
+                    last_track_id = track["id"]
             else:
-                message_id = await send_pause_message(bot)
-        
-        elif track and (track["id"] != last_track_id or current_status != last_status):
-            logger.info("Обнаружен новый трек или возобновление воспроизведения")
-            last_image = track["img"]
-            
-            if message_id:
-                if not await edit_track_message(bot, track, message_id):
-                    message_id = await send_new_track_message(bot, track)
-            else:
-                message_id = await send_new_track_message(bot, track)
-            
-            last_track_id = track["id"]
+                channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
         
         await asyncio.sleep(5)
 
 async def start_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_active, message_id
+    global bot_active, channel_message_id
     
     if bot_active:
-        await update.message.reply_text(
-            "🔴 Трекер уже работает!",
-            reply_markup=get_reply_keyboard()
+        await update_status_message(
+            context.bot,
+            update.effective_chat.id,
+            "🔴 Трекер уже работает!"
         )
         return
     
     bot_active = True
-    message_id = None
+    channel_message_id = None
     asyncio.create_task(track_checker())
-    await update.message.reply_text(
-        "🟢 Трекер запущен! Начинаю отслеживание...",
-        reply_markup=get_reply_keyboard()
+    await update_status_message(
+        context.bot,
+        update.effective_chat.id,
+        "🟢 Трекер запущен! Начинаю отслеживание..."
     )
-    logger.info("Трекер запущен")
 
 async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_active, message_id
+    global bot_active, channel_message_id
     
     if not bot_active:
-        await update.message.reply_text(
-            "🔴 Трекер уже остановлен!",
-            reply_markup=get_reply_keyboard()
+        await update_status_message(
+            context.bot,
+            update.effective_chat.id,
+            "🔴 Трекер уже остановлен!"
         )
         return
     
     bot_active = False
-    if message_id:
-        await delete_message(Bot(token=TELEGRAM_BOT_TOKEN), message_id)
-        message_id = None
-    await update.message.reply_text(
-        "⏹️ Трекер остановлен. Сообщение удалено.",
-        reply_markup=get_reply_keyboard()
+    if channel_message_id:
+        await delete_message(
+            context.bot,
+            CHANNEL_ID,
+            channel_message_id
+        )
+        channel_message_id = None
+    
+    await update_status_message(
+        context.bot,
+        update.effective_chat.id,
+        "⏹️ Трекер остановлен. Сообщение удалено."
     )
-    logger.info("Трекер остановлен")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -230,19 +227,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_bot(update, context)
     elif text == "⏹ Остановить трекер":
         await stop_bot(update, context)
-    else:
-        await update.message.reply_text(
-            "Используйте кнопки для управления трекером",
-            reply_markup=get_reply_keyboard()
-        )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
-    await update.message.reply_text(
+    global bot_status_message_id
+    
+    if bot_status_message_id:
+        try:
+            await delete_message(
+                context.bot,
+                update.effective_chat.id,
+                bot_status_message_id
+            )
+        except:
+            pass
+    
+    msg = await update.message.reply_text(
         "🎵 Музыкальный трекер Яндекс.Музыки\n\n"
         "Используйте кнопки ниже для управления:",
         reply_markup=get_reply_keyboard()
     )
+    bot_status_message_id = msg.message_id
 
 def main():
     # Проверка переменных окружения
