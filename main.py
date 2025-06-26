@@ -8,7 +8,8 @@ from telegram import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, MessageHandler, filters
+    Application, CommandHandler, ContextTypes, MessageHandler, filters,
+    CallbackQueryHandler
 )
 from telegram.error import BadRequest, TelegramError
 
@@ -29,16 +30,19 @@ channel_message_id = None
 bot_active = False
 bot_status_message_id = None
 
-def get_reply_keyboard():
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("▶️ Запустить трекер"), KeyboardButton("⏹ Остановить трекер")]],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+def get_inline_keyboard():
+    """Генерирует inline-клавиатуру с кнопками управления"""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("▶️ Запустить трекер", callback_data="start_tracker"),
+            InlineKeyboardButton("⏹️ Остановить трекер", callback_data="stop_tracker")
+        ],
+        [InlineKeyboardButton("🔄 Обновить статус", callback_data="refresh_status")]
+    ])
 
 def generate_multi_service_link(track_title: str, artist: str, yandex_link: str) -> str:
     """Генерирует ссылку на мультисервисный поиск трека"""
-    base_url = "https://songwhip.com/"
+    base_url = "https://song.link/ya/"
     query = f"{artist} - {track_title}"
     return f"{base_url}?q={quote(query)}&ref=yamusic_bot"
 
@@ -88,7 +92,6 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
         
         keyboard = [
             [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
-        ]
         markup = InlineKeyboardMarkup(keyboard)
         
         msg = await bot.send_photo(
@@ -110,7 +113,6 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         
         keyboard = [
             [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
-        ]
         markup = InlineKeyboardMarkup(keyboard)
         
         await bot.edit_message_media(
@@ -141,13 +143,13 @@ async def update_status_message(bot: Bot, chat_id: int, text: str):
                 chat_id=chat_id,
                 message_id=bot_status_message_id,
                 text=text,
-                reply_markup=get_reply_keyboard()
+                reply_markup=get_inline_keyboard()
             )
         else:
             msg = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                reply_markup=get_reply_keyboard()
+                reply_markup=get_inline_keyboard()
             )
             bot_status_message_id = msg.message_id
     except Exception as e:
@@ -174,59 +176,58 @@ async def track_checker():
         
         await asyncio.sleep(5)
 
-async def start_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_active, channel_message_id
+    query = update.callback_query
+    await query.answer()
     
-    if bot_active:
-        await update_status_message(
-            context.bot,
-            update.effective_chat.id,
-            "🔴 Трекер уже работает!"
-        )
-        return
-    
-    bot_active = True
-    channel_message_id = None
-    asyncio.create_task(track_checker())
-    await update_status_message(
-        context.bot,
-        update.effective_chat.id,
-        "🟢 Трекер запущен! Начинаю отслеживание..."
-    )
-
-async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_active, channel_message_id
-    
-    if not bot_active:
-        await update_status_message(
-            context.bot,
-            update.effective_chat.id,
-            "🔴 Трекер уже остановлен!"
-        )
-        return
-    
-    bot_active = False
-    if channel_message_id:
-        await delete_message(
-            context.bot,
-            CHANNEL_ID,
-            channel_message_id
-        )
+    if query.data == "start_tracker":
+        if bot_active:
+            await update_status_message(
+                context.bot,
+                query.message.chat.id,
+                "🔴 Трекер уже работает!"
+            )
+            return
+        
+        bot_active = True
         channel_message_id = None
-    
-    await update_status_message(
-        context.bot,
-        update.effective_chat.id,
-        "⏹️ Трекер остановлен. Сообщение удалено."
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    
-    if text == "▶️ Запустить трекер":
-        await start_bot(update, context)
-    elif text == "⏹ Остановить трекер":
-        await stop_bot(update, context)
+        asyncio.create_task(track_checker())
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            "🟢 Трекер запущен! Начинаю отслеживание..."
+        )
+    elif query.data == "stop_tracker":
+        if not bot_active:
+            await update_status_message(
+                context.bot,
+                query.message.chat.id,
+                "🔴 Трекер уже остановлен!"
+            )
+            return
+        
+        bot_active = False
+        if channel_message_id:
+            await delete_message(
+                context.bot,
+                CHANNEL_ID,
+                channel_message_id
+            )
+            channel_message_id = None
+        
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            "⏹️ Трекер остановлен. Сообщение удалено."
+        )
+    elif query.data == "refresh_status":
+        status_text = "🟢 Трекер активен" if bot_active else "🔴 Трекер остановлен"
+        await update_status_message(
+            context.bot,
+            query.message.chat.id,
+            f"{status_text}\n\nИспользуйте кнопки для управления:"
+        )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -245,7 +246,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(
         "🎵 Музыкальный трекер Яндекс.Музыки\n\n"
         "Используйте кнопки ниже для управления:",
-        reply_markup=get_reply_keyboard()
+        reply_markup=get_inline_keyboard()
     )
     bot_status_message_id = msg.message_id
 
@@ -261,7 +262,7 @@ def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(button_handler))
     
     logger.info("Бот запущен и готов к работе")
     app.run_polling()
