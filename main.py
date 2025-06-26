@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Загрузка переменных окружения
 load_dotenv()
 
+# Конфигурация
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -64,23 +65,18 @@ def generate_multi_service_link(track_id: str) -> str:
 def get_lyrics(track_title: str, artist: str) -> str:
     """Получает текст песни с Genius"""
     try:
-        # Очистка от спецсимволов и лишних частей
         clean_title = unidecode(track_title.split('(')[0].split('-')[0].strip())
         clean_artist = unidecode(artist.split(',')[0].split('&')[0].strip())
         
-        # Поиск на Genius
         song = genius.search_song(clean_title, clean_artist)
-        
         if not song:
-            return f"Текст не найден 😢\nПопробуйте поискать вручную: https://genius.com/search?q={quote(f'{clean_artist} {clean_title}')}"
+            return f"Текст не найден 😢\nПопробуйте: https://genius.com/search?q={quote(f'{clean_artist} {clean_title}')}"
         
-        # Очистка текста
         lyrics = song.lyrics.replace("Embed", "").replace("You might also like", "").strip()
-        return lyrics[:4000]  # Обрезка под лимит Telegram
-        
+        return lyrics[:4000]
     except Exception as e:
         logger.error(f"Genius error: {str(e)[:100]}")
-        return f"Ошибка при получении текста 😞\nПопробуйте позже или проверьте: https://genius.com/search?q={quote(f'{artist} {track_title}')}"
+        return f"Ошибка 😞 Проверьте: https://genius.com/search?q={quote(f'{artist} {track_title}')}"
 
 def get_current_track():
     try:
@@ -96,20 +92,16 @@ def get_current_track():
         )
         
         if r.status_code != 200:
-            logger.warning(f"API вернул статус {r.status_code}")
+            logger.warning(f"API статус {r.status_code}")
             return None
             
         data = r.json()
-        logger.debug(f"Полный ответ API: {data}")
-
         if not data.get("track"):
-            logger.info("Трек не найден")
             return None
             
         t = data["track"]
         track_id = t.get("track_id")
         if not track_id:
-            logger.error("Отсутствует ID трека в ответе API")
             return None
 
         artists = ", ".join(t["artist"]) if isinstance(t.get("artist"), list) else t.get("artist", "")
@@ -123,30 +115,26 @@ def get_current_track():
             "img": t.get("img")
         }
     except Exception as e:
-        logger.error(f"Ошибка при получении трека: {e}", exc_info=True)
+        logger.error(f"Ошибка получения трека: {e}")
         return None
 
 async def send_new_track_message(bot: Bot, track: dict) -> int:
     try:
-        caption = f"{track['title']} — {track['artists']}"
-        
         keyboard = [
             [
-                InlineKeyboardButton("🔊 Яндекс.Музыка", url=track['yandex_link']),
+                InlineKeyboardButton("🔊 Яндекс", url=track['yandex_link']),
                 InlineKeyboardButton("🌍 Все платформы", url=track['multi_link'])
             ],
             [InlineKeyboardButton("📝 Текст песни", 
                 callback_data=f"lyrics_{track['id']}_{quote(track['title'])}_{quote(track['artists'])}")]
         ]
-        markup = InlineKeyboardMarkup(keyboard)
         
         msg = await bot.send_photo(
             chat_id=CHANNEL_ID,
             photo=track["img"],
-            caption=caption,
-            reply_markup=markup
+            caption=f"{track['title']} — {track['artists']}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        logger.info(f"Отправлен трек: {caption}")
         return msg.message_id
     except Exception as e:
         logger.error(f"Ошибка отправки трека: {e}")
@@ -154,30 +142,51 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
 
 async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
     try:
-        caption = f"{track['title']} — {track['artists']}"
-        media = InputMediaPhoto(media=track["img"], caption=caption)
-        
         keyboard = [
             [
-                InlineKeyboardButton("🔊 Яндекс.Музыка", url=track['yandex_link']),
+                InlineKeyboardButton("🔊 Яндекс", url=track['yandex_link']),
                 InlineKeyboardButton("🌍 Все платформы", url=track['multi_link'])
             ],
             [InlineKeyboardButton("📝 Текст песни", 
                 callback_data=f"lyrics_{track['id']}_{quote(track['title'])}_{quote(track['artists'])}")]
         ]
-        markup = InlineKeyboardMarkup(keyboard)
         
         await bot.edit_message_media(
             chat_id=CHANNEL_ID,
             message_id=msg_id,
-            media=media,
-            reply_markup=markup
+            media=InputMediaPhoto(media=track["img"], caption=f"{track['title']} — {track['artists']}"),
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        logger.info(f"Обновлен трек: {track['title']}")
         return True
     except Exception as e:
         logger.error(f"Ошибка обновления трека: {e}")
         return False
+
+async def delete_message(bot: Bot, chat_id: int, msg_id: int):
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+    except Exception as e:
+        logger.error(f"Ошибка удаления: {e}")
+
+async def update_status_message(bot: Bot, chat_id: int, text: str):
+    global bot_status_message_id
+    try:
+        if bot_status_message_id:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_status_message_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+        else:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=get_inline_keyboard()
+            )
+            bot_status_message_id = msg.message_id
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса: {e}")
 
 async def lyrics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -185,20 +194,15 @@ async def lyrics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         _, track_id, title, artist = query.data.split('_', 3)
-        title = unquote(title)
-        artist = unquote(artist)
+        title, artist = unquote(title), unquote(artist)
         
-        # Показываем индикатор загрузки
         await query.edit_message_reply_markup(
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Ищем текст...", callback_data="loading")]
             ])
         )
         
-        # Получаем текст
         lyrics = get_lyrics(title, artist)
-        
-        # Отправляем результат
         if len(lyrics) <= 1000:
             await query.message.reply_text(
                 f"🎤 *{title}* — {artist}\n\n{lyrics}",
@@ -206,45 +210,88 @@ async def lyrics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 disable_web_page_preview=True
             )
         else:
-            # Разбиваем длинный текст на части
             parts = [lyrics[i:i+1000] for i in range(0, len(lyrics), 1000)]
             await query.message.reply_text(f"🎤 *{title}* — {artist}\n\n{parts[0]}", parse_mode="Markdown")
             for part in parts[1:]:
                 await query.message.reply_text(part)
         
-        # Обновляем кнопки
         await query.edit_message_reply_markup(
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("🔊 Слушать", url=f"https://music.yandex.ru/track/{track_id}"),
-                    InlineKeyboardButton("📖 Полный текст", url=f"https://genius.com/search?q={quote(title+' '+artist)}")
+                    InlineKeyboardButton("📖 Genius", url=f"https://genius.com/search?q={quote(title+' '+artist)}")
                 ]
             ])
         )
-        
     except Exception as e:
-        logger.error(f"Lyrics handler error: {e}")
-        await query.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
+        logger.error(f"Ошибка lyrics_handler: {e}")
+        await query.message.reply_text("⚠️ Ошибка. Попробуйте позже.")
 
-# ... (остальные функции остаются без изменений: delete_message, update_status_message, 
-# track_checker, button_handler, start_command)
+async def track_checker():
+    global last_track_id, channel_message_id, bot_active
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    
+    while bot_active:
+        track = get_current_track()
+        if track:
+            if channel_message_id and track["id"] != last_track_id:
+                if not await edit_track_message(bot, track, channel_message_id):
+                    channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
+            elif not channel_message_id:
+                channel_message_id = await send_new_track_message(bot, track)
+                last_track_id = track["id"]
+        await asyncio.sleep(5)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot_active, channel_message_id
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "start_tracker":
+        if not bot_active:
+            bot_active = True
+            channel_message_id = None
+            asyncio.create_task(track_checker())
+            await update_status_message(context.bot, query.message.chat.id, "🟢 Трекер запущен!")
+    elif query.data == "stop_tracker":
+        if bot_active:
+            bot_active = False
+            if channel_message_id:
+                await delete_message(context.bot, CHANNEL_ID, channel_message_id)
+                channel_message_id = None
+            await update_status_message(context.bot, query.message.chat.id, "⏹️ Трекер остановлен")
+    elif query.data == "refresh_status":
+        status = "🟢 Активен" if bot_active else "🔴 Остановлен"
+        await update_status_message(context.bot, query.message.chat.id, f"{status}\nУправление:")
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot_status_message_id
+    if bot_status_message_id:
+        try:
+            await delete_message(context.bot, update.effective_chat.id, bot_status_message_id)
+        except:
+            pass
+    
+    msg = await update.message.reply_text(
+        "🎵 Музыкальный трекер\nУправление:",
+        reply_markup=get_inline_keyboard()
+    )
+    bot_status_message_id = msg.message_id
 
 def main():
     # Проверка переменных окружения
     required_vars = ["TELEGRAM_BOT_TOKEN", "YANDEX_TOKEN", "CHANNEL_ID", "GENIUS_TOKEN"]
-    missing = [var for var in required_vars if not os.getenv(var)]
-    
-    if missing:
-        logger.error(f"Отсутствуют переменные окружения: {', '.join(missing)}")
+    if missing := [var for var in required_vars if not os.getenv(var)]:
+        logger.error(f"Отсутствуют: {', '.join(missing)}")
         return
     
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CallbackQueryHandler(lyrics_handler, pattern="^lyrics_"))
     
-    logger.info("Бот запущен и готов к работе")
+    logger.info("Бот запущен")
     app.run_polling()
 
 if __name__ == "__main__":
