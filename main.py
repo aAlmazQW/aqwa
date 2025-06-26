@@ -91,7 +91,9 @@ async def send_new_track_message(bot: Bot, track: dict) -> int:
         caption = f"{track['title']} — {track['artists']}"
         
         keyboard = [
-            [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
+            [InlineKeyboardButton("🎵 Слушать на всех платформах",
+                                   url=track['multi_link'])]
+        ]
         markup = InlineKeyboardMarkup(keyboard)
         
         msg = await bot.send_photo(
@@ -111,8 +113,10 @@ async def edit_track_message(bot: Bot, track: dict, msg_id: int) -> bool:
         caption = f"{track['title']} — {track['artists']}"
         media = InputMediaPhoto(media=track["img"], caption=caption)
         
-        keyboard = [
-            [InlineKeyboardButton("🎵 Слушать на всех платформах", url=track['multi_link'])]
+        keyboard =[
+            [InlineKeyboardButton("🎵 Слушать на всех платформах",
+                                    url=track['multi_link'])]
+        ]
         markup = InlineKeyboardMarkup(keyboard)
         
         await bot.edit_message_media(
