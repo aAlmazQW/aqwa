@@ -92,7 +92,7 @@ def get_current_track():
             "User-Agent": "Mozilla/5.0"
         }
         r = requests.get(
-            "https://track.mipoh.ru", 
+            "https://track.mipoh.ru/get_current_track_beta", 
             headers=headers, 
             timeout=10, 
             verify=False
