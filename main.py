@@ -96,21 +96,44 @@ def get_current_track():
         return None
 
 def fetch_lyrics(title, artist):
+    # 1. Пытаемся через lrclib.net
     try:
         query = f"{title} {artist}"
         url = f"https://lrclib.net/api/search?q={quote(query)}"
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-        if not data:
-            return None
-        track_id = data[0]['track']['id']
-        lyrics_url = f"https://lrclib.net/api/get?track_id={track_id}"
-        lyrics_data = requests.get(lyrics_url, timeout=10).json()
-        return lyrics_data.get("plainLyrics") or lyrics_data.get("syncedLyrics")
+        if data:
+            track_id = data[0]['track']['id']
+            lyrics_data = requests.get(f"https://lrclib.net/api/get?track_id={track_id}", timeout=10).json()
+            lyrics = lyrics_data.get("plainLyrics") or lyrics_data.get("syncedLyrics")
+            if lyrics:
+                return lyrics
     except Exception as e:
-        logger.error(f"Ошибка загрузки текста песни: {e}")
-        return None
+        logger.warning(f"lrclib.net не сработал: {e}")
+
+    # 2. Пытаемся через Musixmatch
+    try:
+        params = {
+            'q_track': title,
+            'q_artist': artist,
+            'apikey': 'IEJ5E8XFaHQvIQNfs7IC',
+            'format': 'json'
+        }
+        r = requests.get(
+            "https://apic-desktop.musixmatch.com/ws/1.1/matcher.lyrics.get",
+            params=params,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data and 'lyrics' in data['message']['body']:
+            return data['message']['body']['lyrics']['lyrics_body'].split('...')[0].strip()
+    except Exception as e:
+        logger.warning(f"Musixmatch не сработал: {e}")
+
+    return "⚠️ Текст песни не найден."
 
 async def send_new_track_message(bot, track, lyrics_msg_id):
     keyboard = [
