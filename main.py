@@ -96,9 +96,10 @@ def get_current_track():
         return None
 
 def fetch_lyrics(title, artist):
-    # 1. Пытаемся через lrclib.net
+    query = f"{title} {artist}"
+
+    # 1. lrclib.net
     try:
-        query = f"{title} {artist}"
         url = f"https://lrclib.net/api/search?q={quote(query)}"
         r = requests.get(url, timeout=10)
         r.raise_for_status()
@@ -112,7 +113,7 @@ def fetch_lyrics(title, artist):
     except Exception as e:
         logger.warning(f"lrclib.net не сработал: {e}")
 
-    # 2. Пытаемся через Musixmatch
+    # 2. Musixmatch
     try:
         params = {
             'q_track': title,
@@ -132,6 +133,17 @@ def fetch_lyrics(title, artist):
             return data['message']['body']['lyrics']['lyrics_body'].split('...')[0].strip()
     except Exception as e:
         logger.warning(f"Musixmatch не сработал: {e}")
+
+    # 3. Genius
+    try:
+        if genius:
+            clean_title = unidecode(title.split('(')[0].split('-')[0].strip())
+            clean_artist = unidecode(artist.split(',')[0].split('&')[0].strip())
+            song = genius.search_song(clean_title, clean_artist)
+            if song and song.lyrics:
+                return song.lyrics.strip()
+    except Exception as e:
+        logger.warning(f"Genius не сработал: {e}")
 
     return "⚠️ Текст песни не найден."
 
