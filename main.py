@@ -26,6 +26,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+DOWNLOAD_CHANNEL_ID = int(os.getenv("DOWNLOAD_CHANNEL_ID"))
 GENIUS_TOKEN = os.getenv("GENIUS_TOKEN")
 
 last_track_id = None
@@ -162,7 +163,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "download_track":
         track = get_current_track()
         if track:
-            await download_and_send_track(context.bot, query.message.chat.id, track)
+            await download_and_send_track(context.bot, DOWNLOAD_CHANNEL_ID, track)
+            await query.message.reply_text("Трек отправлен в канал!")
         else:
             await query.message.reply_text("Трек не найден.")
 
@@ -252,7 +254,7 @@ async def track_checker():
         await asyncio.sleep(5)
 
 def main():
-    required_vars = ["TELEGRAM_BOT_TOKEN", "YANDEX_TOKEN", "CHANNEL_ID"]
+    required_vars = ["TELEGRAM_BOT_TOKEN", "YANDEX_TOKEN", "CHANNEL_ID", "DOWNLOAD_CHANNEL_ID"]
     if missing := [var for var in required_vars if not os.getenv(var)]:
         logger.error(f"Отсутствуют обязательные переменные: {', '.join(missing)}")
         return
